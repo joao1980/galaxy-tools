@@ -182,8 +182,10 @@ format_host_ideogram_metadata <- function(sample) {
     host_name <- extract_host_name_from_gtdbtk(sample)
     accession <- infer_host_accession(sample)
 
-    paste0("**Strain/taxon name:** ", host_name, "\n\n",
-           "**Accession number:** ", accession, "\n\n")
+    paste0(
+        "**Strain/taxon name:** ", host_name, "\n\n",
+        "**Accession number:** ", accession, "\n\n"
+    )
 }
 
 get_file_info <- function(path, loaded_data) {
@@ -594,10 +596,12 @@ log_debug(paste("combined_unique samples:", paste(combined_unique$Sample, collap
 ```
 
 ```{r report_specific_helpers, echo=FALSE}
-#DefenseFinder output headers renamed
+# DefenseFinder output headers renamed
 format_defense_finder_output <- function(defense_finder_data) {
-    required_cols <- c("sys_id", "type", "subtype", "sys_beg", "sys_end",
-                       "protein_in_syst", "genes_count", "name_of_profiles_in_sys")
+    required_cols <- c(
+        "sys_id", "type", "subtype", "sys_beg", "sys_end",
+        "protein_in_syst", "genes_count", "name_of_profiles_in_sys"
+    )
 
     missing_cols <- setdiff(required_cols, names(defense_finder_data))
     if (length(missing_cols) > 0) {
@@ -618,7 +622,6 @@ format_defense_finder_output <- function(defense_finder_data) {
             `Profile names in system` = name_of_profiles_in_sys
         )
 }
-
 ```
 
 
@@ -910,7 +913,7 @@ process_sample <- function(sample, combined_unique, host_genomes_paths, genome_d
                 )
             write_tsv_table(genomad_checkv_tbl, "Genomad_CheckV", sample)
 
-            
+
             cat("**Host Genome Ideogram with Phages**:\n\n")
             cat(format_host_ideogram_metadata(sample))
             tryCatch(
