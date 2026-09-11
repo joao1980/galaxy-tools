@@ -622,12 +622,27 @@ format_defense_finder_output <- function(defense_finder_data) {
             `Profile names in system` = name_of_profiles_in_sys
         )
 }
+
 ```
 
 
 ```{r main_workflow, fig.width=6, fig.height=6, out.height="100%", out.width='100%', dpi=300, fig.align='center', warning=FALSE, message=FALSE, results='asis'}
 # Process proviruses data
 # Handling of missing/NA geNomad coordinates and fragmented MAGs
+# Normalize sequence/contig names for matching geNomad output to FASTA-derived ideogram names.
+# This avoids false mismatches when FASTA headers include descriptions, e.g.
+# ">NC_000913.3 Escherichia coli ...", while geNomad reports
+# "NC_000913.3|provirus_...".
+normalize_contig_id <- function(x) {
+    x <- as.character(x)
+    x <- stringr::str_replace(x, "\\|provirus_.*$", "")
+    x <- stringr::str_replace(x, "\\s.*$", "")
+    x
+}
+
+# Process proviruses data
+# Keep coordinate-defined provirus regions, but keep the ORIGINAL normalized
+# contig name. The conversion to c1/c2/... is done later using the FASTA order.
 process_proviruses <- function(data_genomad) {
     if (is.null(data_genomad) || nrow(data_genomad) == 0) {
         log_debug("No geNomad data available for process_proviruses")
@@ -638,12 +653,14 @@ process_proviruses <- function(data_genomad) {
         dplyr::filter(
             topology == "Provirus",
             !is.na(coordinates),
+            coordinates != "",
             coordinates != "NA",
+            coordinates != ".",
             stringr::str_detect(coordinates, "^[0-9]+-[0-9]+$")
         ) %>%
-        dplyr::mutate(contig = sub("\\|provirus_.*", "", seq_name)) %>%
+        dplyr::mutate(contig = normalize_contig_id(seq_name)) %>%
         dplyr::select(seq_name, coordinates, length, contig, virus_score, n_hallmarks) %>%
-        tidyr::separate(coordinates, into = c("start", "end"), sep = "-") %>%
+        tidyr::separate(coordinates, into = c("start", "end"), sep = "-", remove = FALSE) %>%
         dplyr::mutate(
             start = as.integer(start),
             end = as.integer(end)
@@ -662,11 +679,10 @@ process_proviruses <- function(data_genomad) {
             end = proviruses$end
         )
     )
-    proviruses_gr_features$length <- proviruses_gr_features %>%
-        ranges() %>%
-        width()
+    proviruses_gr_features$length <- as.numeric(proviruses$end - proviruses$start + 1)
     proviruses_gr_features$score <- as.numeric(proviruses$virus_score)
     proviruses_gr_features$n_hallmarks <- as.numeric(proviruses$n_hallmarks)
+    proviruses_gr_features$seq_name <- proviruses$seq_name
 
     proviruses_gr_features$n_hallmarks_pos <-
         abs(start(proviruses_gr_features) - end(proviruses_gr_features)) / 2
@@ -684,19 +700,62 @@ plot_genome_ideogram <- function(genome_current, proviruses_gr_features, host_di
     genome_ideogram <- gmoviz::getIdeogramData(fasta_file = fasta_file_path)
 
     original_seqlevels <- as.character(GenomeInfoDb::seqlevels(genome_ideogram))
-    new_seqlevels <- paste0("c", seq_along(original_seqlevels))
-    names(new_seqlevels) <- original_seqlevels
+    original_tokens <- normalize_contig_id(original_seqlevels)
 
-    # Keep only provirus features located on contigs that exist in the host FASTA.
-    feature_contigs <- as.character(GenomeInfoDb::seqnames(proviruses_gr_features))
-    keep_features <- feature_contigs %in% original_seqlevels
+    feature_tokens <- normalize_contig_id(as.character(GenomeInfoDb::seqnames(proviruses_gr_features)))
+    matched_idx <- match(feature_tokens, original_tokens)
+    keep_features <- !is.na(matched_idx)
+
+    # If a genome has only one FASTA sequence, allow coordinate-defined proviruses
+    # to be placed on that sequence even when the FASTA header and geNomad contig
+    # name differ by description text or minor formatting.
+    if (!any(keep_features) && length(original_seqlevels) == 1) {
+        matched_idx <- rep(1L, length(proviruses_gr_features))
+        keep_features <- rep(TRUE, length(proviruses_gr_features))
+    }
+
     if (!any(keep_features)) {
         cat("Coordinate-defined provirus regions were reported, but their contig names could not be matched to the host-genome FASTA. Candidate viral sequences are shown in the summary table, but the host-genome ideogram was skipped to avoid plotting inconsistent coordinates.\n\n")
         return(invisible(NULL))
     }
-    proviruses_gr_features <- proviruses_gr_features[keep_features]
 
-    # Rename genome and feature seqlevels with the same original FASTA-derived map.
+    proviruses_gr_features <- proviruses_gr_features[keep_features]
+    matched_seqlevels <- original_seqlevels[matched_idx[keep_features]]
+
+    # Rebuild the GRanges with the FASTA-derived seqlevel names. This keeps the
+    # plotting coordinates but ensures that feature seqnames and ideogram seqlevels
+    # refer to the same sequences before both are renamed to c1/c2/...
+    proviruses_gr_features <- GRanges(
+        seqnames = matched_seqlevels,
+        ranges = IRanges(
+            start = as.numeric(start(proviruses_gr_features)),
+            end = as.numeric(end(proviruses_gr_features))
+        ),
+        length = as.numeric(proviruses_gr_features$length),
+        score = as.numeric(proviruses_gr_features$score),
+        n_hallmarks = as.numeric(proviruses_gr_features$n_hallmarks),
+        seq_name = proviruses_gr_features$seq_name
+    )
+
+    # Remove impossible coordinates when sequence lengths are available.
+    seq_lengths <- GenomeInfoDb::seqlengths(genome_ideogram)
+    if (!is.null(seq_lengths) && any(!is.na(seq_lengths))) {
+        feature_seq <- as.character(GenomeInfoDb::seqnames(proviruses_gr_features))
+        feature_bounds <- seq_lengths[feature_seq]
+        in_bounds <- is.na(feature_bounds) |
+            (as.numeric(start(proviruses_gr_features)) >= 1 &
+             as.numeric(end(proviruses_gr_features)) <= as.numeric(feature_bounds))
+        proviruses_gr_features <- proviruses_gr_features[in_bounds]
+    }
+
+    if (length(proviruses_gr_features) == 0) {
+        cat("Coordinate-defined provirus regions were reported, but the coordinates were outside the host FASTA sequence lengths. Candidate viral sequences are shown in the summary table, but the host-genome ideogram was skipped.\n\n")
+        return(invisible(NULL))
+    }
+
+    new_seqlevels <- paste0("c", seq_along(original_seqlevels))
+    names(new_seqlevels) <- original_seqlevels
+
     genome_ideogram <- GenomeInfoDb::renameSeqlevels(genome_ideogram, new_seqlevels)
     feature_rename_map <- new_seqlevels[names(new_seqlevels) %in% GenomeInfoDb::seqlevels(proviruses_gr_features)]
     proviruses_gr_features <- GenomeInfoDb::renameSeqlevels(proviruses_gr_features, feature_rename_map)
@@ -876,10 +935,18 @@ process_sample <- function(sample, combined_unique, host_genomes_paths, genome_d
             if (length(GenomeInfoDb::seqlevels(host_genome_ideogram)) == 1) {
                 host_genome_size <- sum(width(host_genome_ideogram))
             } else {
-                virus_containing_contigs <- unique(sub("\\|.*", "", genomad_summary$seq_name))
-                virus_containing_contigs <- paste0("c", as.numeric(factor(virus_containing_contigs)))
-                filtered_host_genome <- subset_and_update_ideogram(host_genome_ideogram, virus_containing_contigs)
-                host_genome_size <- sum(width(filtered_host_genome))
+                virus_containing_contigs <- unique(normalize_contig_id(genomad_summary$seq_name))
+                host_seqlevels <- as.character(GenomeInfoDb::seqlevels(host_genome_ideogram))
+                host_tokens <- normalize_contig_id(host_seqlevels)
+                matched_host_contigs <- host_seqlevels[match(virus_containing_contigs, host_tokens)]
+                matched_host_contigs <- matched_host_contigs[!is.na(matched_host_contigs)]
+
+                if (length(matched_host_contigs) > 0) {
+                    filtered_host_genome <- subset_and_update_ideogram(host_genome_ideogram, matched_host_contigs)
+                    host_genome_size <- sum(width(filtered_host_genome))
+                } else {
+                    host_genome_size <- sum(width(host_genome_ideogram))
+                }
             }
 
             # Process proviruses
