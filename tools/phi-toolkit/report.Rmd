@@ -622,7 +622,6 @@ format_defense_finder_output <- function(defense_finder_data) {
             `Profile names in system` = name_of_profiles_in_sys
         )
 }
-
 ```
 
 
@@ -744,7 +743,7 @@ plot_genome_ideogram <- function(genome_current, proviruses_gr_features, host_di
         feature_bounds <- seq_lengths[feature_seq]
         in_bounds <- is.na(feature_bounds) |
             (as.numeric(start(proviruses_gr_features)) >= 1 &
-             as.numeric(end(proviruses_gr_features)) <= as.numeric(feature_bounds))
+                as.numeric(end(proviruses_gr_features)) <= as.numeric(feature_bounds))
         proviruses_gr_features <- proviruses_gr_features[in_bounds]
     }
 
