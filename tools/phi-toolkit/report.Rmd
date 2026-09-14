@@ -818,7 +818,7 @@ plot_genome_ideogram <- function(genome_current, proviruses_gr_features, host_di
         labels,
         facing = "clockwise"
     )
-    title(main = paste0("Candidate prophages in ", host_display_label), cex.main = 0.9)
+    #title(main = paste0("Candidate prophages in ", host_display_label), cex.main = 0.9)
 }
 
 process_sample <- function(sample, combined_unique, host_genomes_paths, genome_data) {
